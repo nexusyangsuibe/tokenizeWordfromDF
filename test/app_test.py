@@ -1,4 +1,4 @@
-from tokenizeWordfromDF import tokenizeWordfromDFusingCongigMenu
+from tokenizeWordfromDF import tokenizeWordfromDFusingConfigMenu
 import time
 import os
 
@@ -27,6 +27,6 @@ if __name__=="__main__":
 
     print("测试代码1运行开始，预计将要花费20分钟\n")
     t0=time.time()
-    rtn_wt=tokenizeWordfromDFusingCongigMenu(word_tokenize_cfg)
+    rtn_wt=tokenizeWordfromDFusingConfigMenu(word_tokenize_cfg)
     print(rtn_wt.head(10))
     print(f"\n测试代码1运行完成，用时{(time.time()-t0):.4f}秒，您可以查看finalresults问价夹中生成的pickle文件以一窥运行结果")
