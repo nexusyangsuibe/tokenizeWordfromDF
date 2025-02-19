@@ -1,0 +1,11 @@
+GDP
+GNP
+CPI
+PPI
+PMI
+上证综指
+德国DAX
+法国CAC
+英国富时
+英国FTSE
+欧洲斯托克
