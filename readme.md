@@ -6,7 +6,7 @@
 
 特点：使用多进程最大限度利用现代计算机的多核性能（相较于简单的使用for-loop遍历观测并顺序操作），使用pickle格式存储中间过程以减少过程内存占用并实现存档点功能。
 
-本程序使用thulac（https://github.com/thunlp/THULAC）作为分词工具，为了使用本程序，用户需要对本地安装的thulac（一般在python安装路径下的Lib/site-packages/thulac目录下，如果不希望修改全局生效，也可以将thulac文件夹复制到工作目录下修改）做出如下修改：
+本程序使用thulac（<a>https://github.com/thunlp/THULAC</a>）作为分词工具，为了使用本程序，用户需要对本地安装的thulac（一般在python安装路径下的Lib/site-packages/thulac目录下，如果不希望修改全局生效，也可以将thulac文件夹复制到工作目录下修改）做出如下修改：
 1. manage/Preprocesser.py中注释掉如下部分（一般是29-41行）
 
         def __init__(self, rm_space=False):
