@@ -307,7 +307,7 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
     saveConcatedDataAsFinalResult(runtime_code,input_file,output_filename,clear_respawnpoint_upon_conplete)
     return input_file
 
-def tokenizeWordfromDFusingCongigMenu(config_menu):
+def tokenizeWordfromDFusingConfigMenu(config_menu):
     # a shortcut to run the code using a config menu to avoid input to many parameters
     runtime_code=config_menu["runtime_code"]
     input_file=config_menu["input_file"]
