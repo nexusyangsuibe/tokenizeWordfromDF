@@ -91,6 +91,9 @@ def doTokenize(tokenizer,user_added_critic_words,user_added_other_words,user_add
     text=re.sub(r"\u3000","",text) # replace \u3000 with empty string, in most cases it will be detected and deleted automatically by thulac, but it is not always the case
     if omit_content_in_parentheses:
         len_text_before_delete_content_in_parentheses=len(text)
+        if len_text_before_delete_content_in_parentheses==0:
+            print(f"索引{idx}对应的文本信息'{raw_text}'经过预处理后为空，删去该条记录")
+            return None # to avoid division by 0 error
         text=text.replace("（","(") # some authors are so stupid and irresponsible that they use Chinese parenthesis to match English parenthesis or wise versa, it is time-consuming to detect these faults, so I just change all the parentheses to the English style
         text=text.replace("）",")")
         forward_lookup_text=re.sub(r"\(.*?\)|（.*?）|\[.*?\]|【.*?】","",text)
@@ -144,10 +147,6 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
     if "finalresults" not in os.listdir():
         print(f"在工作目录{os.getcwd()}下未找到用于存储最终结果的finalresults文件夹，将自动创建")
         os.mkdir("finalresults")
-    # clear the respawnpoint folder before running if needed
-    if clear_respawnpoint_before_run:
-        for file in os.listdir("respawnpoint/"):
-            os.remove("respawnpoint/"+file)
     # read and check the input file
     if type(input_file)==str and input_file.endswith(".pkl"):
         input_file=pickle.load(open(input_file,"rb"))
@@ -158,6 +157,19 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
     tmp_buf=StringIO()
     input_file.info(buf=tmp_buf)
     df_identity_code=sha256(tmp_buf.getvalue().encode(encoding="utf-8")).hexdigest()[:24] # used to check the whether the file in the respawnpoint is the results of handling the same DataFrame
+    # check the respawnpoint to find the finished and unfinished interval
+    finished_intervals=[]
+    result_filenames=[]
+    for raw_filename in os.listdir("respawnpoint"):
+        if ck_point:=re.match(f"{runtime_code}_wt_(\\d+)_(\\d+)_{df_identity_code}_{tokenize_column_name}_{'meaningful' if only_retain_meaningful_words else 'all'}.pkl",raw_filename):
+            result_filenames.append("respawnpoint/"+raw_filename)
+            finished_intervals.append([int(ck_point.group(1)),int(ck_point.group(2))]) # note all the intervals are defined as closed in the front and open in the end
+    # clear the respawnpoint folder before running if needed
+    if clear_respawnpoint_before_run:
+        if not finished_intervals or input(f"您输入的参数{clear_respawnpoint_before_run=}要求在运行前删去respawnpoint文件夹中的所有内容，但程序在该文件夹中检测到已经完成运行的区间{finished_intervals=}，若按计划删去respawnpoint文件夹中的所有内容则已完成分词部分的区间记录将被删除且无法恢复，即程序将完全从头开始重新分词而不是继续已经完成的部分，输入y确认，输入其他任意字符取消清空respawnpoint文件夹：").lower()=="y":
+            for file in os.listdir("respawnpoint/"):
+                os.remove("respawnpoint/"+file)
+    # continue to process the DataFrame
     index_name=input_file.index.name # save the index name to restore it after reset the index
     if not index_name:
         while True: # if the existing index does not have a name, we need to give it one name else we cannnot recover it
@@ -200,13 +212,6 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
     # load and initialize the thulac tokenizer
     thul=thulac.thulac(user_dict=f"respawnpoint/{runtime_code}_user_dict_for_tokenizer.txt",filt=only_retain_meaningful_words) # the parameter filt should be defined as True when we do lexcial analysis, and False when we do grammatical analysis in which POS tags are needed
     doTokenizeOhneNewsContentTuple=partial(doTokenize,thul,user_added_critic_words,user_added_other_words,user_added_stop_words,only_retain_meaningful_words,omit_content_in_parentheses,delete_single_character,minor_retain_words_thereshold,other_preprocessing_injection)
-    # check the respawnpoint to find the finished and unfinished interval
-    finished_intervals=[]
-    result_filenames=[]
-    for raw_filename in os.listdir("respawnpoint"):
-        if ck_point:=re.match(f"{runtime_code}_wt_(\\d+)_(\\d+)_{df_identity_code}_{tokenize_column_name}_{'meaningful' if only_retain_meaningful_words else 'all'}.pkl",raw_filename):
-            result_filenames.append("respawnpoint/"+raw_filename)
-            finished_intervals.append([int(ck_point.group(1)),int(ck_point.group(2))]) # note all the intervals are defined as closed in the front and open in the end
     if finished_intervals:
         for batch_interval in finished_intervals:
             if batch_interval[0]>=batch_interval[1]:
