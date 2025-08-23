@@ -1,6 +1,5 @@
 from tokenizeWordfromDF import tokenizeWordfromDFusingConfigMenu
 import time
-import os
 
 if __name__=="__main__":
 
@@ -18,6 +17,7 @@ if __name__=="__main__":
         "omit_content_in_parentheses":True, # 是否去除括号内的内容，可选项，默认为True，应该是布尔值类型，当且仅当only_retain_meaningful_words为True时生效，去除括号内的内容主要是为了防止同义重复（同位语）干扰词频计算
         "delete_single_character":True,  # 是否删去单字，可选项，默认为True，应该是布尔值类型，当且仅当only_retain_meaningful_words为True时生效，主要是用于去除“是”、“要”、“有”这些确实是实义动词但语义含量有限的单字
         "minor_retain_words_thereshold":6, # 为保留文本需要有意义的单词的最小数量，可选项，默认为6，应该是正整数类型，当且仅当only_retain_meaningful_words为True时生效,主要用于剔除信息含量有限的短文本，若不需要可以设为None
+        "drop_duplicates_in_tokenize_column":True, # 是否删除tokenize_column_name列完全相同的观测，可选项，默认为True，应该是布尔值类型
         "other_preprocessing_injection":None, # 用户注入的其他文本预处理程序，可选项，默认为None，应该是单变量的函数类型，请不要使用高级函数（例如闭包）以避免函数无法序列化进入多进程，通常用于掐头去尾等操作
         "output_filename":"test_output.pkl", # 输出文件名，可选项，默认为None即不需要输出，为防止文本中逗号与逗号分隔符混淆不支持csv，支持xlsx，数据量较大时会以1000000行为分割输出多个excel文件，支持pickle(.pkl)格式，输出文件会出现在finalresults文件夹中
         # 以下两项respwanpoint文件夹配置，respawnpoint文件夹用于存储临时文件，以避免在读取大量数据时占用过多内存造成程序崩溃，若不清空respawnpoint文件夹可能导致之前的临时文件被重复读入

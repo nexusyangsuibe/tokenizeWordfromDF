@@ -138,7 +138,7 @@ def doTokenize(tokenizer,user_added_critic_words,user_added_other_words,user_add
         return (idx,tokenized_text_with_pos)
 
 # main function
-def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_column_name,user_added_stop_words_filename,user_added_critic_words_filename,user_added_other_words_filename,size_per_respawn_chunk_GB,only_retain_meaningful_words,omit_content_in_parentheses,delete_single_character,minor_retain_words_thereshold,other_preprocessing_injection,output_filename,clear_respawnpoint_before_run,clear_respawnpoint_upon_conplete):
+def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_column_name,user_added_stop_words_filename,user_added_critic_words_filename,user_added_other_words_filename,size_per_respawn_chunk_GB,only_retain_meaningful_words,omit_content_in_parentheses,delete_single_character,minor_retain_words_thereshold,drop_duplicates_in_tokenize_column,other_preprocessing_injection,output_filename,clear_respawnpoint_before_run,clear_respawnpoint_upon_conplete):
     print("分词模块开始运行")
     # create the folders if not exists
     if "respawnpoint" not in os.listdir():
@@ -154,6 +154,10 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
         raise ValueError("输入文件必须是DataFrame类型或包含DataFrame的pickle文件路径名")
     if input_file.shape[0]==0:
         raise ValueError("输入的DataFrame为空")
+    if type(tokenize_column_name)!=str or tokenize_column_name not in input_file.columns:
+        raise ValueError(f"输入的tokenize_column必须是字符串类型且存在于输入文件的列名中，当前指定的{tokenize_column_name=}，而输入文件的列名为{input_file.columns=}")
+    if drop_duplicates_in_tokenize_column:
+        input_file.drop_duplicates(subset=tokenize_column_name,inplace=True)
     tmp_buf=StringIO()
     input_file.info(buf=tmp_buf)
     df_identity_code=sha256(tmp_buf.getvalue().encode(encoding="utf-8")).hexdigest()[:24] # used to check the whether the file in the respawnpoint is the results of handling the same DataFrame
@@ -164,11 +168,13 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
         if ck_point:=re.match(f"{runtime_code}_wt_(\\d+)_(\\d+)_{df_identity_code}_{tokenize_column_name}_{'meaningful' if only_retain_meaningful_words else 'all'}.pkl",raw_filename):
             result_filenames.append("respawnpoint/"+raw_filename)
             finished_intervals.append([int(ck_point.group(1)),int(ck_point.group(2))]) # note all the intervals are defined as closed in the front and open in the end
+    finished_intervals.sort()
     # clear the respawnpoint folder before running if needed
     if clear_respawnpoint_before_run:
         if not finished_intervals or input(f"您输入的参数{clear_respawnpoint_before_run=}要求在运行前删去respawnpoint文件夹中的所有内容，但程序在该文件夹中检测到已经完成运行的区间{finished_intervals=}，若按计划删去respawnpoint文件夹中的所有内容则已完成分词部分的区间记录将被删除且无法恢复，即程序将完全从头开始重新分词而不是继续已经完成的部分，输入y确认，输入其他任意字符取消清空respawnpoint文件夹：").lower()=="y":
             for file in os.listdir("respawnpoint/"):
                 os.remove("respawnpoint/"+file)
+            finished_intervals=[]
     # continue to process the DataFrame
     index_name=input_file.index.name # save the index name to restore it after reset the index
     if not index_name:
@@ -180,9 +186,7 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
         index_name=new_index_name
     input_file=input_file.reset_index() # reset the index to default increasing primary key to ensure that the index is unique
     pickle.dump(input_file,open(f"respawnpoint/{runtime_code}_input_dataframe_backup.pkl","wb")) # save the input file to the respawnpoint folder so that the input Dataframe can be released from the memory, thus columns that do not need to be tokenized will not occupy the precious memory
-    if type(tokenize_column_name)!=str or tokenize_column_name not in input_file.columns:
-        raise ValueError(f"输入的tokenize_column必须是字符串类型且存在于输入文件的列名中，当前指定的{tokenize_column_name=}，而输入文件的列名为{input_file.columns=}")
-    input_file=input_file[tokenize_column_name] # only keep the column to be tokenized to save memory
+    input_file=input_file[tokenize_column_name].copy() # only keep the column to be tokenized to save memory
     len_input_file=len(input_file)
     input_file=None # manually collect the garbage to save memory
     # read and check the user-defined word dictionary
@@ -226,7 +230,7 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
                 self_interval=finished_intervals[idx_self]
                 for idx_other in range(idx_self+1,len(finished_intervals)):
                     other_interval=finished_intervals[idx_other]
-                    if (self_interval[1]>other_interval[0]) or (other_interval[1]>self_interval[0]):
+                    if self_interval[0]<=other_interval[0] and self_interval[1]>other_interval[0]:
                         raise ValueError(f"检测到已完成处理的区间中存在重叠关系的区间{self_interval}与{other_interval}，这会导致在最终合并操作时对于采用哪一份运行的结果产生歧义，请检查您的respawnpoint文件夹")
                     elif self_interval[1]==other_interval[0] or self_interval[0]==other_interval[1]:
                         finished_intervals.remove(self_interval)
@@ -243,7 +247,7 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
         if (finished_intervals_end:=finished_intervals[-1][1])<len_input_file:
             unfinished_intervals.append([finished_intervals_end,len_input_file])
         if len(finished_intervals)>1:
-            for idx in len(range(finished_intervals)-1):
+            for idx in range(len(finished_intervals)-1):
                 unfinished_intervals.append([finished_intervals[idx][1],finished_intervals[idx+1][0]])
     else:
         unfinished_intervals=[[0,len_input_file]]
@@ -257,8 +261,8 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
         mem_usage_GB=round(mem_usage/(1024**3),6)
         partitions=int(mem_usage_GB/size_per_respawn_chunk_GB)+1 # define how many respawn chunks are needed, add 1 to avoid devide by zero error
         size_per_respawn_chunk_GB,last_part_add_size=divmod(len_input_file_interval,partitions) # define how many rows should be processed in each respawn chunk
-        batch_intervals=[[idx*size_per_respawn_chunk_GB,(idx+1)*size_per_respawn_chunk_GB] for idx in range(partitions-1)]
-        batch_intervals.append([size_per_respawn_chunk_GB*(partitions-1),size_per_respawn_chunk_GB*partitions+last_part_add_size])
+        batch_intervals=[[idx*size_per_respawn_chunk_GB+unfinished_interval[0],(idx+1)*size_per_respawn_chunk_GB+unfinished_interval[0]] for idx in range(partitions-1)]
+        batch_intervals.append([size_per_respawn_chunk_GB*(partitions-1)+unfinished_interval[0],size_per_respawn_chunk_GB*partitions+last_part_add_size+unfinished_interval[0]])
         print(f"在区间{unfinished_interval}中共有{len_input_file_interval}行需要分词处理，内存占用{mem_usage_GB}GB，共分为{partitions}组运行")
         # save the tuples to be processed to the disk and explicitly collect the garbage to save memory
         raw_filenames=[]
@@ -326,8 +330,9 @@ def tokenizeWordfromDFusingConfigMenu(config_menu):
     omit_content_in_parentheses=config_menu.get("omit_content_in_parentheses",True)
     delete_single_character=config_menu.get("delete_single_character",True)
     minor_retain_words_thereshold=config_menu.get("minor_retain_words_thereshold",6)
+    drop_duplicates_in_tokenize_column=config_menu.get("drop_duplicates_in_tokenize_column",True)
     other_preprocessing_injection=config_menu.get("other_preprocessing_injection",None)
     output_filename=config_menu.get("output_filename",None)
     clear_respawnpoint_before_run=config_menu.get("clear_respawnpoint_before_run",False)
     clear_respawnpoint_upon_conplete=config_menu.get("clear_respawnpoint_upon_conplete",True)
-    return tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_column_name,user_added_stop_words_filename,user_added_critic_words_filename,user_added_other_words_filename,size_per_respawn_chunk_GB,only_retain_meaningful_words,omit_content_in_parentheses,delete_single_character,minor_retain_words_thereshold,other_preprocessing_injection,output_filename,clear_respawnpoint_before_run,clear_respawnpoint_upon_conplete)
+    return tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_column_name,user_added_stop_words_filename,user_added_critic_words_filename,user_added_other_words_filename,size_per_respawn_chunk_GB,only_retain_meaningful_words,omit_content_in_parentheses,delete_single_character,minor_retain_words_thereshold,drop_duplicates_in_tokenize_column,other_preprocessing_injection,output_filename,clear_respawnpoint_before_run,clear_respawnpoint_upon_conplete)
