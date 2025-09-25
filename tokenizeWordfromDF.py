@@ -1,8 +1,11 @@
 # 分词筛选模块
 
+from collections.abc import Iterable
 from functools import partial
 from hashlib import sha256
+from pathlib import Path
 from io import StringIO
+
 import multiprocessing as mp
 import pickle
 import os
@@ -10,61 +13,92 @@ import re
 
 import pandas as pd
 import numpy as np
+import xlsxwriter
 import thulac
 
 # common tool functions are as follows
+def ensureDFCorrectPklDump(df,filepath):
+    # ensure that Dataframe are correctly write into pickle file
+    path=Path(filepath)
+    pathname=path.parent
+    filename=path.name
+    pickle.dump(df, open(pathname/f"tmp_{filename}", "wb"))
+    while True:
+        saved_df=pickle.load(open(pathname/f"tmp_{filename}","rb"))
+        if saved_df.equals(df):
+            if os.path.exists(path):
+                os.remove(path)
+            os.rename(pathname/f"tmp_{filename}",path)
+            return None
+        else:
+            pickle.dump(df, open(pathname/f"tmp_{filename}", "wb"))
+
+def findBestBulkNum(df,thereshold_GB,best_bulk_num=1):
+    # find the best bulk number that meets the demand that all bulks smaller than thereshold_GB
+    for idx in range(best_bulk_num):
+        memory_usage_GB=df.iloc[int(len(df)*(idx/best_bulk_num)):int(len(df)*((idx+1)/best_bulk_num))].memory_usage(deep=True).sum()/(1024**3)
+        if memory_usage_GB>thereshold_GB:
+            new_bulk_num=max(int(df.memory_usage(deep=True).sum()/(1024**3))//thereshold_GB+1,best_bulk_num+1)
+            return findBestBulkNum(df,thereshold_GB,best_bulk_num=new_bulk_num)
+    else:
+        return best_bulk_num
+
+def outputAccording2BestBulkNum(param):
+    # write into excel according to the best bulk number
+    df_bulk,fileName,file_rows,thereshold_GB=param
+    df_bulk=df_bulk.map(lambda x: str(x) if isinstance(x,Iterable) and not isinstance(x,str) else x)
+    bulk_num=findBestBulkNum(df_bulk,thereshold_GB)
+    if bulk_num==1:
+        workbook=xlsxwriter.Workbook(fileName,{'constant_memory':True,"strings_to_urls":False,"nan_inf_to_errors":True})
+        worksheet=workbook.add_worksheet()
+        worksheet.write_row(0,0,df_bulk.columns)
+        for row_idx,row in enumerate(df_bulk.itertuples(index=False),start=0):
+            worksheet.write_row(row_idx+1,0,row)
+        workbook.close()
+    else:
+        print(f"文件{fileName}所需的存储空间超过阙值{thereshold_GB}GB，再分为{bulk_num}个文件输出")
+        for iidx in range(bulk_num):
+            fileName_=f"{''.join(fileName.split('.')[:-1])}_{iidx}.xlsx"
+            print(f"正在写入{fileName_}")
+            workbook=xlsxwriter.Workbook(fileName_,{'constant_memory':True,"strings_to_urls":False,"nan_inf_to_errors":True})
+            worksheet=workbook.add_worksheet()
+            worksheet.write_row(0,0,df_bulk.columns)
+            for row_idx,row in enumerate(df_bulk.iloc[int(file_rows*(iidx/bulk_num)):int(file_rows*((iidx+1)/bulk_num))].itertuples(index=False),start=0):
+                worksheet.write_row(row_idx+1,0,row)
+            workbook.close()
+    return None
+
 def outputAsXlsx(df,output_filename,output_pathname,thereshold_rows=1000000,thereshold_GB=4):
-    # output the dataframe as xlsx file with divsion within the thereshold_rows and thereshold_GB
-    # 搜寻正确的分块数
-    def findBestBulkNum(df,thereshold_GB,best_bulk_num=1):
-        for idx in range(best_bulk_num):
-            memory_usage_GB=df.iloc[int(len(df)*(idx/best_bulk_num)):int(len(df)*((idx+1)/best_bulk_num))].memory_usage(deep=True).sum()/(1024**3)
-            if memory_usage_GB>thereshold_GB:
-                new_bulk_num=max(int(df.memory_usage(deep=True).sum()/(1024**3))//thereshold_GB+1,best_bulk_num+1)
-                return findBestBulkNum(df,thereshold_GB,best_bulk_num=new_bulk_num)
-        else:
-            return best_bulk_num
-    # 按分块数输出
-    def outputAccording2BestBulkNum(df_bulk,fileName,thereshold_GB):
-        bulk_num=findBestBulkNum(df_bulk,thereshold_GB)
-        if bulk_num==1:
-            df_bulk.to_excel(fileName)
-        else:
-            print(f"文件{fileName}所需的存储空间超过阙值{thereshold_GB}GB，再分为{bulk_num}个文件输出")
-            for iidx in range(bulk_num):
-                fileName_=f"{''.join(fileName.split('.')[:-1])}_{iidx+1}.xlsx"
-                print(f"正在写入{fileName_}")
-                df_bulk.iloc[int(file_rows*(iidx/bulk_num)):int(file_rows*((iidx+1)/bulk_num))].to_excel(fileName_)
-        return None
-    # 先按照行数阙值分为file_num+1个文件输出，对每个输出文件检查存储空间大小并根据最优文件数输出
+    # output the dataframe into excel with divsions within the thereshold_rows and thereshold_GB
     file_num=int(df.shape[0]//thereshold_rows)
-    print(f"共{df.shape[0]}行，文件名为{output_filename}，分为{file_num+1}个文件输出")
+    print(f"共{df.shape[0]}行，文件名为{output_filename}，预计分为{file_num+1}个文件输出")
     if file_num==0:
-        outputAccording2BestBulkNum(df,fileName=f"{output_pathname}{'' if output_pathname.endswith('/') else '/'}{''.join(output_filename.split('.')[:-1])}.xlsx",thereshold_GB=thereshold_GB)
+        outputAccording2BestBulkNum((df,f"{output_pathname}{'' if output_pathname.endswith('/') else '/'}{''.join(output_filename.split('.')[:-1])}.xlsx",None,thereshold_GB))
     else:
         file_rows,last_rows=divmod(df.shape[0],file_num+1)
         last_rows=file_rows+last_rows
-        print(f"前{file_num}个文件{file_rows}行，最后1个文件{last_rows}行")
+        print(f"每个文件约有{file_rows}行")
+        tasks=[]
         for idx in range(file_num):
             df_bulk=df.iloc[idx*file_rows:(idx+1)*file_rows]
-            fileName=f"{output_pathname}{'' if output_pathname.endswith('/') else '/'}{''.join(output_filename.split('.')[:-1])}_{idx+1}.xlsx"
-            print(f"正在写入{fileName}")
-            outputAccording2BestBulkNum(df_bulk,fileName,thereshold_GB)
+            fileName=f"{output_pathname}{'' if output_pathname.endswith('/') else '/'}{''.join(output_filename.split('.')[:-1])}_{idx}.xlsx"
+            tasks.append((df_bulk,fileName,file_rows,thereshold_GB))
         if last_rows:
             df_bulk=df.iloc[file_num*file_rows:]
-            fileName=f"{output_pathname}{'' if output_pathname.endswith('/') else '/'}{''.join(output_filename.split('.')[:-1])}_{file_num+1}.xlsx"
-            print(f"正在写入{fileName}")
-            outputAccording2BestBulkNum(df_bulk,fileName,thereshold_GB)
+            fileName=f"{output_pathname}{'' if output_pathname.endswith('/') else '/'}{''.join(output_filename.split('.')[:-1])}_{file_num}.xlsx"
+            tasks.append((df_bulk,fileName,file_rows,thereshold_GB))
+        pool=mp.Pool(processes=8)
+        pool.map(outputAccording2BestBulkNum,tasks)
     return None
 
 def saveConcatedDataAsFinalResult(runtime_code,concatedDF,output_filename,clear_respawnpoint_upon_conplete):
     # the end process of the concatDF, including writing the final result to the disk and clear the respawnpoint folder
     if not clear_respawnpoint_upon_conplete or not output_filename:
-        pickle.dump(concatedDF,open(f"respawnpoint/{runtime_code}_word_tokenized.pkl","wb"))
+        ensureDFCorrectPklDump(concatedDF,f"respawnpoint/{runtime_code}_word_tokenized.pkl")
     if output_filename:
         print("开始将最终结果写入硬盘")
         if output_filename.endswith(".pkl"):
-            pickle.dump(concatedDF,open(f"finalresults/{output_filename}","wb"))
+            ensureDFCorrectPklDump(concatedDF,f"finalresults/{output_filename}")
         elif output_filename.endswith(".xlsx"):
             outputAsXlsx(concatedDF,output_filename,"finalresults")
         elif output_filename.endswith(".csv"):
@@ -185,7 +219,7 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
         input_file.index.name=new_index_name
         index_name=new_index_name
     input_file=input_file.reset_index() # reset the index to default increasing primary key to ensure that the index is unique
-    pickle.dump(input_file,open(f"respawnpoint/{runtime_code}_input_dataframe_backup.pkl","wb")) # save the input file to the respawnpoint folder so that the input Dataframe can be released from the memory, thus columns that do not need to be tokenized will not occupy the precious memory
+    ensureDFCorrectPklDump(input_file,f"respawnpoint/{runtime_code}_input_dataframe_backup.pkl")
     input_file=input_file[tokenize_column_name].copy() # only keep the column to be tokenized to save memory
     len_input_file=len(input_file)
     input_file=None # manually collect the garbage to save memory
@@ -268,7 +302,7 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
         raw_filenames=[]
         for batch_interval in batch_intervals:
             raw_filename=f"respawnpoint/{runtime_code}_word_tokenize_raw_tuple_{batch_interval[0]}_{batch_interval[1]}.pkl"
-            pickle.dump(input_file_interval[batch_interval[0]:batch_interval[1]],open(raw_filename,"wb"))
+            ensureDFCorrectPklDump(input_file_interval[batch_interval[0]:batch_interval[1]],raw_filename)
             raw_filenames.append(raw_filename)
         input_file_interval=None # garbage collection to save memory
         # do the tokenize and generate statistics (if needed) for each respawn chunk
@@ -284,7 +318,7 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
             # save and return
             runtime_interval=re.match(f"respawnpoint/{runtime_code}_word_tokenize_raw_tuple_(\\d+)_(\\d+).pkl",raw_filename)
             store_path=f"respawnpoint/{runtime_code}_wt_{runtime_interval.group(1)}_{runtime_interval.group(2)}_{df_identity_code}_{tokenize_column_name}_{'meaningful' if only_retain_meaningful_words else 'all'}.pkl"
-            pickle.dump(results,open(store_path,"wb"))
+            ensureDFCorrectPklDump(results,store_path)
             print(f"区间{runtime_interval.group(1)}至{runtime_interval.group(2)}的分词任务完成")
             result_filenames.append(store_path)
     # collect and check the results
@@ -298,7 +332,25 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
             print(f"自动删除出现错误的文件{result_filename}并重新运行该部分的分词")
             os.remove(result_filename)
             clear_respawnpoint_before_run=False
-            return tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_column_name,user_added_stop_words_filename,user_added_critic_words_filename,user_added_other_words_filename,size_per_respawn_chunk_GB,only_retain_meaningful_words,omit_content_in_parentheses,delete_single_character,minor_retain_words_thereshold,other_preprocessing_injection,output_filename,clear_respawnpoint_before_run,clear_respawnpoint_upon_conplete)
+            return tokenizeWordfromDF(
+                runtime_code=runtime_code,
+                input_file=input_file,
+                tokenize_column_name=tokenize_column_name,
+                tokenized_column_name=tokenized_column_name,
+                user_added_stop_words_filename=user_added_stop_words_filename,
+                user_added_critic_words_filename=user_added_critic_words_filename,
+                user_added_other_words_filename=user_added_other_words_filename,
+                size_per_respawn_chunk_GB=size_per_respawn_chunk_GB,
+                only_retain_meaningful_words=only_retain_meaningful_words,
+                omit_content_in_parentheses=omit_content_in_parentheses,
+                delete_single_character=delete_single_character,
+                minor_retain_words_thereshold=minor_retain_words_thereshold,
+                drop_duplicates_in_tokenize_column=drop_duplicates_in_tokenize_column,
+                other_preprocessing_injection=other_preprocessing_injection,
+                output_filename=output_filename,
+                clear_respawnpoint_before_run=clear_respawnpoint_before_run,
+                clear_respawnpoint_upon_conplete=clear_respawnpoint_upon_conplete
+            )
     final_results.sort() # we sort it to the natural number order so that we can write the results into the Dataframe according to the order instead of the index per se
     final_results=zip(*final_results)
     # concat the tokenized result into the original DataFrame
