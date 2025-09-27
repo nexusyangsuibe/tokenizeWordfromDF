@@ -29,4 +29,4 @@ if __name__=="__main__":
     t0=time.time()
     rtn_wt=tokenizeWordfromDFusingConfigMenu(word_tokenize_cfg)
     print(rtn_wt.head(10))
-    print(f"\n测试代码1运行完成，用时{(time.time()-t0):.4f}秒，您可以查看finalresults问价夹中生成的pickle文件以一窥运行结果")
+    print(f"\n测试代码1运行完成，用时{(time.time()-t0):.4f}秒，您可以查看finalresults文件夹中生成的pickle文件以一窥运行结果")
