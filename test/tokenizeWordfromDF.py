@@ -17,21 +17,26 @@ import xlsxwriter
 import thulac
 
 # common tool functions are as follows
-def ensureDFCorrectPklDump(df,filepath):
-    # ensure that Dataframe are correctly write into pickle file
+def ensureCorrectPklDump(obj,filepath):
+    # ensure that objects written into pickle files can be read normally to avoid corrupted writing
+    fail=0
     path=Path(filepath)
     pathname=path.parent
     filename=path.name
-    pickle.dump(df, open(pathname/f"tmp_{filename}", "wb"))
+    pickle.dump(obj,open(pathname/f"tmp_{filename}", "wb"))
     while True:
-        saved_df=pickle.load(open(pathname/f"tmp_{filename}","rb"))
-        if saved_df.equals(df):
-            if os.path.exists(path):
-                os.remove(path)
-            os.rename(pathname/f"tmp_{filename}",path)
-            return None
-        else:
-            pickle.dump(df, open(pathname/f"tmp_{filename}", "wb"))
+        if fail>2:
+            raise RuntimeError(f"写入pickle文件已经失败了{fail}次，请检查写入对象的完整性")
+        try:
+            pickle.load(open(pathname/f"tmp_{filename}","rb"))
+            break
+        except:
+            fail+=1
+            pickle.dump(obj,open(pathname/f"tmp_{filename}","wb"))
+    if os.path.exists(path):
+        os.remove(path)
+    os.rename(pathname/f"tmp_{filename}",path)
+    return None
 
 def findBestBulkNum(df,thereshold_GB,best_bulk_num=1):
     # find the best bulk number that meets the demand that all bulks smaller than thereshold_GB
@@ -94,11 +99,11 @@ def outputAsXlsx(df,output_filename,output_pathname,thereshold_rows=1000000,ther
 def saveConcatedDataAsFinalResult(runtime_code,concatedDF,output_filename,clear_respawnpoint_upon_conplete):
     # the end process of the concatDF, including writing the final result to the disk and clear the respawnpoint folder
     if not clear_respawnpoint_upon_conplete or not output_filename:
-        ensureDFCorrectPklDump(concatedDF,f"respawnpoint/{runtime_code}_word_tokenized.pkl")
+        ensureCorrectPklDump(concatedDF,f"respawnpoint/{runtime_code}_word_tokenized.pkl")
     if output_filename:
         print("开始将最终结果写入硬盘")
         if output_filename.endswith(".pkl"):
-            ensureDFCorrectPklDump(concatedDF,f"finalresults/{output_filename}")
+            ensureCorrectPklDump(concatedDF,f"finalresults/{output_filename}")
         elif output_filename.endswith(".xlsx"):
             outputAsXlsx(concatedDF,output_filename,"finalresults")
         elif output_filename.endswith(".csv"):
@@ -219,7 +224,7 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
         input_file.index.name=new_index_name
         index_name=new_index_name
     input_file=input_file.reset_index() # reset the index to default increasing primary key to ensure that the index is unique
-    ensureDFCorrectPklDump(input_file,f"respawnpoint/{runtime_code}_input_dataframe_backup.pkl")
+    ensureCorrectPklDump(input_file,f"respawnpoint/{runtime_code}_input_dataframe_backup.pkl")
     input_file=input_file[tokenize_column_name].copy() # only keep the column to be tokenized to save memory
     len_input_file=len(input_file)
     input_file=None # manually collect the garbage to save memory
@@ -302,7 +307,7 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
         raw_filenames=[]
         for batch_interval in batch_intervals:
             raw_filename=f"respawnpoint/{runtime_code}_word_tokenize_raw_tuple_{batch_interval[0]}_{batch_interval[1]}.pkl"
-            ensureDFCorrectPklDump(input_file_interval[batch_interval[0]:batch_interval[1]],raw_filename)
+            ensureCorrectPklDump(input_file_interval[batch_interval[0]:batch_interval[1]],raw_filename)
             raw_filenames.append(raw_filename)
         input_file_interval=None # garbage collection to save memory
         # do the tokenize and generate statistics (if needed) for each respawn chunk
@@ -318,7 +323,7 @@ def tokenizeWordfromDF(runtime_code,input_file,tokenize_column_name,tokenized_co
             # save and return
             runtime_interval=re.match(f"respawnpoint/{runtime_code}_word_tokenize_raw_tuple_(\\d+)_(\\d+).pkl",raw_filename)
             store_path=f"respawnpoint/{runtime_code}_wt_{runtime_interval.group(1)}_{runtime_interval.group(2)}_{df_identity_code}_{tokenize_column_name}_{'meaningful' if only_retain_meaningful_words else 'all'}.pkl"
-            ensureDFCorrectPklDump(results,store_path)
+            ensureCorrectPklDump(results,store_path)
             print(f"区间{runtime_interval.group(1)}至{runtime_interval.group(2)}的分词任务完成")
             result_filenames.append(store_path)
     # collect and check the results
