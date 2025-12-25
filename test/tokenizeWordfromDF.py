@@ -33,9 +33,7 @@ def ensureCorrectPklDump(obj,filepath):
         except:
             fail+=1
             pickle.dump(obj,open(pathname/f"tmp_{filename}","wb"))
-    if os.path.exists(path):
-        os.remove(path)
-    os.rename(pathname/f"tmp_{filename}",path)
+    os.replace(pathname/f"tmp_{filename}",path)
     return None
 
 def findBestBulkNum(df,thereshold_GB,best_bulk_num=1):
@@ -129,16 +127,28 @@ def doTokenize(tokenizer,user_added_critic_words,user_added_other_words,user_add
     text=re.sub(r"丨|—","，",text) # replace the Chinese character 丨 and — with comma else the tokenizer will recognize them wrongly
     text=re.sub(r"\u3000","",text) # replace \u3000 with empty string, in most cases it will be detected and deleted automatically by thulac, but it is not always the case
     if omit_content_in_parentheses:
+        BRACKET_MAP = {
+        "（": "(", "）": ")",
+        "［": "[", "］": "]",
+        "【": "[", "】": "]",
+        "｛": "{", "｝": "}",
+        "〈": "<", "〉": ">",
+        "《": "<", "》": ">",
+        }
+        def normalize_brackets(text):
+            '''tackle with the full-width/half-width problem'''
+            for k, v in BRACKET_MAP.items():
+                text = text.replace(k, v)
+            return text
         len_text_before_delete_content_in_parentheses=len(text)
         if len_text_before_delete_content_in_parentheses==0:
             print(f"索引{idx}对应的文本信息'{raw_text}'经过预处理后为空，删去该条记录")
             return None # to avoid division by 0 error
-        text=text.replace("（","(") # some authors are so stupid and irresponsible that they use Chinese parenthesis to match English parenthesis or wise versa, it is time-consuming to detect these faults, so I just change all the parentheses to the English style
-        text=text.replace("）",")")
-        forward_lookup_text=re.sub(r"\(.*?\)|（.*?）|\[.*?\]|【.*?】","",text)
+        text=normalize_brackets(text)
+        forward_lookup_text=re.sub(r"\(.*?\)|\[.*?\]|\{.*?\}|<.*?>","",text)
         if len(forward_lookup_text)/len_text_before_delete_content_in_parentheses<0.24: # it is a commen sense that content in the parentheses should not account for a major part of the paragraph, if it does so, there may be a mistake in matching
-            backward_lookup_text=text[::-1] # reverse the string because so authors are so fool that the write a left parenthesis without a right parenthesis matching it. if the regexp do not match from right to left, a left parenthesis that occur early in the paragraph may match a right parenthesis at the end, thus the whole paragraph is deleted as content within the parentheses
-            backward_lookup_text=re.sub(r"\).*?\(|）.*?（|\].*?\[|】.*?【","",backward_lookup_text) # if needed, delete all the content within parentheses, the original form if reverse is not applied at the former step is text=re.sub(r"\(.*?\)|（.*?）|\[.*?\]|【.*?】","",text)
+            backward_lookup_text=text[::-1] # reverse the string because so authors are some fool that the write a left parenthesis without a right parenthesis matching it. if the regexp do not match from right to left, a left parenthesis that occur early in the paragraph may match a right parenthesis at the end, thus the whole paragraph is deleted as content within the parentheses
+            backward_lookup_text=re.sub(r"\).*?\(|\].*?\[|\}.*?\{|>.*?<","",backward_lookup_text) # if needed, delete all the content within parentheses
             backward_lookup_text=backward_lookup_text[::-1]
             if len(backward_lookup_text)==len(forward_lookup_text): # it is faster than backward_loopup_text==foreard_lookup_text
                 text=forward_lookup_text
